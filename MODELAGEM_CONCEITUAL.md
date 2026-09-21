@@ -45,7 +45,7 @@ Antes de classificar os conceitos, é imperativo analisar se eles exigem identid
 | :--- | :--- | :--- | :--- |
 | **Usuário** | Sim | Os dados (telefone, endereço) podem mudar, mas o negócio precisa manter a reputação agregada vinculada à mesma pessoa física/jurídica continuamente. | Entidade |
 | **Agendamento** | Sim | Possui um ciclo de vida dinâmico. O negócio precisa consultar "aquela reserva específica" para mudá-la de Pendente para Confirmada, ou para Cancelá-la. | Entidade |
-| **Serviço** | Não | Importa apenas a composição de seus valores (Nome, Duração, Preço). Se um prestador oferece "Corte", a identidade lógica está no valor oferecido ao cliente. | Entidade |
+| **Serviço** | Não |O Serviço é um descritor intercambiável sem ciclo de vida próprio ou transições de estado. O sistema não rastreia seu histórico temporal; importa apenas o valor (Nome, Duração, Preço) que ele representa no momento da busca e do agendamento. | Objeto de Valor |
 | **Avaliação** | Não | Uma vez gerada, a avaliação é imutável. Importam apenas as notas (serviço e atendimento) e o comentário. Ela qualifica o usuário, não tem ciclo de vida próprio. | Objeto de Valor |
 | **Janela de Tempo** | Não | Uma data e hora de início/fim (ex: "Dia 20, 14h às 15h") não muda de identidade; é apenas uma coordenada estática de tempo. | Objeto de Valor |
 | **Status** | Não | Representa apenas uma classificação/estado temporário no qual o Agendamento se encontra. | Outro (Estado) |
@@ -59,7 +59,7 @@ Com base na investigação de identidade e no significado estrutural, os candida
 | :--- | :--- | :--- | :--- | :--- |
 | **Usuário** | Provável Entidade | Possui identidade única de cadastro. Sofre alterações de estado (bloqueio sistêmico) e age no domínio assumindo papéis distintos. | O negócio pune usuários específicos por *no-shows*. | Alto |
 | **Agendamento** | Provável Entidade | Possui identidade transacional. A mesma reserva será alvo de operações de aprovação, cancelamento e posterior vínculo com a avaliação. | Necessidade de controle de concorrência e máquina de estados. | Alto |
-| **Serviço** | Provável Objeto de Valor | Seu significado no domínio reside em seus atributos de negócio (tempo exigido, descrição, valor). Não transita de estado. | O cliente busca pelas características do serviço. | Médio |
+| **Serviço** | Provável Objeto de Valor | Sua natureza é puramente descritiva. O Agendamento captura os atributos do Serviço (Nome, Duração, Preço) como uma "fotografia" imutável. Reajustes geram um novo Objeto de Valor para ofertas futuras, sem alterar o passado. Uma identidade forte só seria justificada se o negócio exigisse rastrear o histórico de alterações daquele serviço específico ao longo do tempo. | O cliente busca pelas características do serviço. | Médio |
 | **Avaliação** | Provável Objeto de Valor | Não possui ciclo de vida próprio. Serve estritamente para compor a Reputação da entidade Usuário através de um valor consolidado. | A avaliação não é modificada após a submissão. | Alto |
 | **Janela de Tempo** | Provável Objeto de Valor | Representa a coordenada temporal. Dois agendamentos na mesma janela acionam a Invariante de conflito. | Necessidade de checagem matemática de datas/horas. | Alto |
 | **Status do Agendamento** | Outro (Estado) | Condição mutável que rege as transições válidas e o comportamento de bloqueio do Agendamento. | Fluxo do domínio. | Alto |
@@ -178,34 +178,44 @@ classDiagram
     }
 
     class Servico {
-        <<Objeto de Valor>>
+        <<Objeto Valor de>>
         Nome
         DuracaoEstimada
         Preco
     }
 
     class JanelaDeTempo {
-        <<Objeto de Valor>>
+        <<Objeto Valor de>>
         Data
         HoraInicio
         HoraTermino
     }
 
     class Avaliacao {
-        <<Objeto de Valor>>
+        <<Objeto Valor de>>
         NotaServico
         NotaAtendimento
         Comentario
     }
     
     class PoliticaDeTimeout {
-        <<Regra de Negócio>>
+        <<Regra Negócio de>>
         CalculaExpiracao(10h)
+    }
+
+    class Catalogo {
+        <<Visão / Agregada Serviço>>
+        BuscarPrestadores()
+        FiltrarPorDisponibilidade()
     }
 
     Usuario "1" --> "0..N" Agendamento : solicita (como Cliente)
     Usuario "1" --> "0..N" Agendamento : decide (como Prestador)
-    Usuario "1" --> "1..N" Servico : oferta no catálogo
+    Usuario "1" --> "1..N" Servico : cadastra oferta
+    
+    Usuario "1" --> "1" Catalogo : consulta (como Cliente)
+    Catalogo "1" --> "0..N" Servico : exibe
+    
     Agendamento "1" --> "1" JanelaDeTempo : ocupa
     Agendamento "1" --> "1" Servico : referencia
     Agendamento "1" --> "0..2" Avaliacao : origina
@@ -214,11 +224,12 @@ classDiagram
 
 ## 13. Explicação do Modelo Conceitual
 
-*   **Por que cada conceito está presente:** O modelo garante a coesão do marketplace. O `Usuario` centraliza as punições e a identidade. O `Agendamento` é o orquestrador transacional. O `Servico` e a `JanelaDeTempo` fornecem as condições físicas da reserva. A `Avaliacao` é a governança garantidora da segurança do ecossistema.
-*   **Identidade vs. Objetos de Valor:** Apenas `Usuario` e `Agendamento` foram modelados como Entidades, pois são as únicas peças que sofrem transições no tempo (como os bloqueios e cancelamentos). `Servico`, `JanelaDeTempo` e `Avaliacao` foram encapsulados como Objetos de Valor pois importam estritamente pela integridade dos dados que carregam, sem ciclos de vida autônomos.
-*   **Relações mais importantes:** As duas setas partindo de `Usuario` para `Agendamento` sustentam a eliminação da dualidade Cliente/Prestador, demonstrando que uma única identidade atua nos dois pólos da transação assumindo papéis. A relação `Agendamento` → `Servico` (1:1), antes presente apenas no diagrama, foi formalizada nas tabelas de relações e cardinalidades (Etapas 07 e 08) para eliminar a inconsistência entre o modelo visual e o suporte textual.
-*   **Regras impactantes:** A `PoliticaDeTimeout` está representada de forma desacoplada monitorando o Agendamento, ilustrando fisicamente a Invariante das "10 horas antes" (RN02).
-*   **Elementos que ainda apresentam incerteza:** O `Catálogo` foi identificado como candidato a conceito (Etapa 03), mas com grau de certeza baixo: por ora entende-se que é apenas uma visão agregada dos Serviços ofertados, sem identidade nem ciclo de vida próprios, e por isso não foi incluído como classe no diagrama. Da mesma forma, o mecanismo de bloqueio comportamental por reputação ("Hard Block"), citado como necessidade do problema original, ainda não possui Regra de Negócio ou Invariante que o sustente, permanecendo registrado como Pendência de Governança (Etapa 16) até ser investigado com mais profundidade.
+*   **Por que cada conceito está presente:** O modelo garante a coesão do marketplace. O `Usuario` centraliza as punições e a identidade. O `Agendamento` é o orquestrador transacional. O `Servico` e a `JanelaDeTempo` fornecem as coordenadas contratuais da reserva. A `Avaliacao` é a governança de segurança do ecossistema. O `Catalogo` foi incluído para representar o mecanismo central de descoberta da plataforma.
+*   **Identidade vs. Objetos de Valor e Serviços:** Apenas `Usuario` e `Agendamento` foram modelados como Entidades (únicas peças que sofrem transições estruturais no tempo, como os bloqueios e cancelamentos). `Servico`, `JanelaDeTempo` e `Avaliacao` foram encapsulados como Objetos de Valor pois importam pela composição dos dados que carregam.
+*   **O papel do Catálogo no modelo:** O `Catalogo` foi formalizado no diagrama com o estereótipo `<<Visão / Agregada Serviço>>`. Ele não é uma Entidade tradicional, pois não armazena estado próprio; suas responsabilidades são agrupar e exibir (`exibe`) os Serviços cadastrados, permitindo que o Cliente o `consulte` através dos métodos `BuscarPrestadores()` e `FiltrarPorDisponibilidade()`. 
+*   **Relações mais importantes:** As duas setas partindo de `Usuario` para `Agendamento` materializam a eliminação da dualidade Cliente/Prestador. A relação formalizada `Agendamento` → `Servico` garante que não existe intenção de reserva no vácuo, toda reserva exige uma promessa de valor atrelada.
+*   **Regras impactantes:** A `PoliticaDeTimeout` monitora o Agendamento, ilustrando fisicamente a Invariante das "10 horas antes" (RN02).
+*   **Elementos que ainda apresentam incerteza:** O "Hard Block" (Bloqueio Comportamental) está ausente do diagrama de classe, pois pertence ao fluxo sistêmico de status da Conta do Usuário, o que será mapeado em contextos delimitados futuros.
 
 ## 14. Evolução do modelo
 
